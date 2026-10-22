@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "update-prices": "node scripts/update-prices.mjs",
+    "notify-price-changes": "node scripts/notify-price-changes.mjs",
     "build": "vite build",
     "serve": "vite build && node scripts/serve.mjs",
     "icons": "node scripts/make-icons.mjs"

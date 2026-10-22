@@ -1,8 +1,13 @@
 rules_version = '2';
 
-// Tradeoff: the PWA gate is only a client-side facade, so the product list is readable and writable by anyone who
-// has the public web config. Writes are limited to the expected fields and to the document id = asin.
-// Devices can only register themselves. The price job uses the Admin SDK, which bypasses these rules.
+// What is allowed (client SDK, i.e. the PWA; the price job's Admin SDK bypasses these rules):
+// - products/{asin}: anyone can read the list. Create and update only with the fields asin, name, targetPrice,
+//   addedAt, archivedAt, where asin equals the document id, addedAt is a string and archivedAt is null or a string.
+//   Delete is refused: "removing" a product in the PWA archives it (archivedAt), so the history is kept.
+// - devices/{token}: nobody can read or delete. A client can only create or refresh its own registration, with the
+//   fields createdAt and lastSeenAt set to the server time.
+// Tradeoff: the PWA gate is only a client-side facade, so the product list can be written by anyone who has the
+// public web config. Writes are limited to the expected fields and to the document id = asin.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /products/{asin} {
@@ -13,7 +18,7 @@ service cloud.firestore {
         && request.resource.data.addedAt is string
         && (request.resource.data.archivedAt == null || request.resource.data.archivedAt is string);
 
-      allow delete: if true;
+      allow delete: if false;
     }
 
     match /devices/{token} {

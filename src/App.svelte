@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte';
   import ProductCard from './components/ProductCard.svelte';
   import Gate from './components/Gate.svelte';
   import AddProduct from './components/AddProduct.svelte';
@@ -21,6 +22,9 @@
   let productsError = $state('');
   let actionError = $state('');
   let loadStarted = false;
+  // subscribeProducts is async: the unsubscribe function arrives after the listener is set up.
+  let unsubscribeProducts = null;
+  let destroyed = false;
 
   const active = $derived(products ? activeProducts(products) : []);
   const archived = $derived(products ? archivedProducts(products) : []);
@@ -46,8 +50,16 @@
       (err) => {
         productsError = err.message;
       },
-    );
+    ).then((unsubscribe) => {
+      if (destroyed) unsubscribe();
+      else unsubscribeProducts = unsubscribe;
+    });
   }
+
+  onDestroy(() => {
+    destroyed = true;
+    unsubscribeProducts?.();
+  });
 
   function unlock() {
     unlocked = true;

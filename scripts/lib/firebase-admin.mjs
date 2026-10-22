@@ -1,14 +1,15 @@
-// Firebase Admin access for the hourly job: reads the "products" collection and sends notifications to "devices".
+// Firebase Admin access for the notification step: reads the "devices" collection, sends notifications, removes dead tokens.
 // firebase-admin is imported lazily inside connect(), so the pure modules and the tests never load it.
-import { productsFromDocuments } from './products.mjs';
 
 const BATCH_SIZE = 500;
 const DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
 ]);
+const PRIVATE_KEY_HEADER = '-----BEGIN PRIVATE KEY-----';
 
 // Parses the FIREBASE_SERVICE_ACCOUNT secret. The error never echoes the content.
+// Throws a plain Error for any invalid value: the caller treats it like a missing secret (notifications skipped).
 export function parseServiceAccount(raw) {
   let account;
   try {
@@ -18,6 +19,9 @@ export function parseServiceAccount(raw) {
   }
   if (!account || typeof account !== 'object' || !account.project_id || !account.private_key || !account.client_email) {
     throw new Error('FIREBASE_SERVICE_ACCOUNT non contiene project_id, private_key e client_email');
+  }
+  if (typeof account.private_key !== 'string' || !account.private_key.includes(PRIVATE_KEY_HEADER)) {
+    throw new Error(`FIREBASE_SERVICE_ACCOUNT: private_key non valida (manca l'header ${PRIVATE_KEY_HEADER})`);
   }
   return account;
 }
@@ -35,19 +39,14 @@ export async function connect(serviceAccount) {
   };
 }
 
-// All products, archived ones included: the caller decides which ones to fetch.
-export async function readProducts(db) {
-  const snapshot = await db.collection('products').get();
-  return productsFromDocuments(snapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
-}
-
 // `messages` is a list of { title, body }, sent as data-only messages: the service worker builds the notification,
-// so it also appears when the page is closed. Tokens FCM rejects as unregistered are deleted from "devices".
+// so it also appears when the page is closed. Tokens FCM rejects as unregistered are dropped from the list for the
+// following messages of the same run, and deleted from "devices" at the end.
 export async function sendPriceNotifications({ db, messaging, messages, log = console.log }) {
   if (messages.length === 0) return { sent: 0, removed: 0 };
 
   const snapshot = await db.collection('devices').select().get();
-  const tokens = snapshot.docs.map((doc) => doc.id);
+  let tokens = snapshot.docs.map((doc) => doc.id);
   if (tokens.length === 0) {
     log('Nessun dispositivo registrato: notifiche non inviate');
     return { sent: 0, removed: 0 };
@@ -56,6 +55,7 @@ export async function sendPriceNotifications({ db, messaging, messages, log = co
   const dead = new Set();
   let sent = 0;
   for (const message of messages) {
+    const deadNow = new Set();
     for (let start = 0; start < tokens.length; start += BATCH_SIZE) {
       const chunk = tokens.slice(start, start + BATCH_SIZE);
       const response = await messaging.sendEachForMulticast({
@@ -64,9 +64,11 @@ export async function sendPriceNotifications({ db, messaging, messages, log = co
       });
       sent += response.successCount;
       response.responses.forEach((result, index) => {
-        if (!result.success && DEAD_TOKEN_CODES.has(result.error?.code)) dead.add(chunk[index]);
+        if (!result.success && DEAD_TOKEN_CODES.has(result.error?.code)) deadNow.add(chunk[index]);
       });
     }
+    tokens = tokens.filter((token) => !deadNow.has(token));
+    deadNow.forEach((token) => dead.add(token));
   }
 
   const deadTokens = [...dead];

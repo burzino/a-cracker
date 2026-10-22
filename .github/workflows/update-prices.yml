@@ -26,10 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Fetch prices and notify changes
+      - name: Fetch prices
         env:
-          # Optional: without it the prices are still updated and the notifications are skipped with a warning.
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # Public project id (repository variable). The product list is publicly readable, so no secret is needed here:
+          # prices are always updated, even without FIREBASE_SERVICE_ACCOUNT.
+          FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          PRICE_CHANGES_PATH: ${{ runner.temp }}/price-changes.json
         run: npm run update-prices
 
       - name: Commit if prices changed
@@ -44,3 +46,16 @@ jobs:
             git pull --rebase --autostash
             git push
           fi
+
+      - name: Notify price changes
+        # Runs only after the push succeeded (a failed step stops the job). A failed push leaves the change to the next
+        # run, so it is never notified twice. Without the secret the notifications are skipped with a warning.
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PRICE_CHANGES_PATH: ${{ runner.temp }}/price-changes.json
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::warning::Notifiche disattivate: FIREBASE_SERVICE_ACCOUNT non impostato"
+            exit 0
+          fi
+          npm run notify-price-changes -- "$PRICE_CHANGES_PATH"

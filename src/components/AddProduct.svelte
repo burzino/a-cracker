@@ -35,7 +35,7 @@
     }
 
     busy = true;
-    message = 'Salvataggio su GitHub in corso…';
+    message = 'Salvataggio in corso…';
     messageKind = 'status';
     try {
       await onadd({ asin, targetPrice });

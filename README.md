@@ -10,7 +10,7 @@ Requisito: Node.js 20.19 o superiore (Vite 8). Prima del primo uso installa le d
 npm install             # Svelte 5, Vite 8, firebase (client), firebase-admin (job)
 npm test                # test unitari e test del build
 npm run build           # build della PWA in dist/ (riesce anche senza variabili Firebase)
-npm run update-prices   # aggiorna i prezzi (richiede FIREBASE_SERVICE_ACCOUNT e rete)
+npm run update-prices   # aggiorna i prezzi (richiede FIREBASE_PROJECT_ID e rete; le notifiche sono un passo a parte)
 npm run serve           # build di dist/ e server su http://localhost:8080
 npm run icons           # rigenera le icone PWA (solo se cambi il disegno)
 ```
@@ -61,7 +61,7 @@ In GitHub: **Settings → Secrets and variables → Actions → Variables → Ne
 
 Il workflow Pages le passa al build. Se mancano, la PWA mostra "Firebase non configurato in questa build".
 
-**4. Secret `FIREBASE_SERVICE_ACCOUNT` (per il job orario)**
+**4. Secret `FIREBASE_SERVICE_ACCOUNT` (per le notifiche del job orario; senza, i prezzi si aggiornano lo stesso)**
 
 1. **Project settings → Service accounts → Generate new private key**: scarica il JSON. Contiene una chiave privata: non committarlo.
 2. In GitHub: **Settings → Secrets and variables → Actions → Secrets → New repository secret**. Nome `FIREBASE_SERVICE_ACCOUNT`, valore: l'intero contenuto del JSON.
@@ -112,7 +112,7 @@ Copia l'output in `PASSWORD_SHA256`, poi esegui `npm test` (il test verifica che
 - `.env.example` – nomi delle variabili `VITE_FIREBASE_*` (senza valori).
 - `vite.config.js` – configurazione Vite (`base: './'` per GitHub Pages in sottocartella).
 - `dist/` – output del build (generato, non versionato): viene pubblicato da GitHub Pages.
-- `scripts/` – `update-prices.mjs` (job orario), `serve.mjs`, `make-icons.mjs`. La logica pura è in `scripts/lib/` (`history.mjs`, `products.mjs`, `notifications.mjs`, `parse-price.mjs`); l'accesso a Firebase Admin in `scripts/lib/firebase-admin.mjs`.
+- `scripts/` – `update-prices.mjs` (job orario, aggiorna i prezzi), `notify-price-changes.mjs` (notifiche, dopo il push), `serve.mjs`, `make-icons.mjs`. La logica pura è in `scripts/lib/` (`history.mjs`, `products.mjs`, `notifications.mjs`, `parse-price.mjs`, `firestore-rest.mjs`); l'accesso a Firebase Admin in `scripts/lib/firebase-admin.mjs`.
 - `test/` – test con `node:test` (incluso un test che verifica il contenuto di `dist/`).
 - `.github/workflows/` – aggiornamento prezzi (ogni ora, `17 * * * *`) e deploy su Pages.
 - `.claude/agents/` – agenti di progetto (analyst, developer, reviewer) per lo sviluppo assistito.

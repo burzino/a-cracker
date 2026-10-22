@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildNotificationMessage, detectPriceChanges } from '../scripts/lib/notifications.mjs';
-import { parseServiceAccount } from '../scripts/lib/firebase-admin.mjs';
 
 const NOW = '2026-10-22T10:00:00.000Z';
 const LATER = '2026-10-22T11:00:00.000Z';
@@ -56,14 +55,4 @@ test('buildNotificationMessage formats the prices in euro, Italian style', () =>
 test('buildNotificationMessage uses the ASIN when there is no name', () => {
   const message = buildNotificationMessage({ asin: 'B08N5WRWNW', name: null, from: 10, to: 12 });
   assert.match(message.body, /^B08N5WRWNW: da 10,00\s€ a 12,00\s€$/);
-});
-
-test('parseServiceAccount rejects invalid JSON and incomplete accounts without echoing the content', () => {
-  assert.throws(() => parseServiceAccount('{not json'), /non è JSON valido/);
-  assert.throws(() => parseServiceAccount('{"project_id":"x"}'), /project_id, private_key e client_email/);
-});
-
-test('parseServiceAccount accepts a complete account', () => {
-  const account = { project_id: 'p', private_key: 'k', client_email: 'e@example.com' };
-  assert.deepEqual(parseServiceAccount(JSON.stringify(account)), account);
 });

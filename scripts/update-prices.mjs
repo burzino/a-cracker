@@ -1,5 +1,6 @@
-// Reads the product list from Firestore ("products"), fetches the current price of every active product and rewrites
-// data/prices.json. Sends a push notification for each price change to the devices in "devices".
+// Reads the product list from Firestore ("products", public read), fetches the current price of every active product and
+// rewrites data/prices.json. Computes the price changes and writes them to PRICE_CHANGES_PATH (if set) for the
+// notification step, scripts/notify-price-changes.mjs. Sends nothing itself.
 // Run by .github/workflows/update-prices.yml. Requires Node 20.19+ (global fetch).
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -8,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { BlockedError, extractPrice, extractProductName, hasPriceMarkers } from './lib/parse-price.mjs';
 import { buildPricesFile, hasPriceChanges } from './lib/history.mjs';
 import { isActive } from './lib/products.mjs';
-import { buildNotificationMessage, detectPriceChanges } from './lib/notifications.mjs';
-import { connect, parseServiceAccount, readProducts, sendPriceNotifications } from './lib/firebase-admin.mjs';
+import { detectPriceChanges } from './lib/notifications.mjs';
+import { fetchPublicProducts } from './lib/firestore-rest.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PRICES_PATH = resolve(ROOT, 'data/prices.json');
@@ -62,72 +63,44 @@ async function scrapeOne(asin) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Notifications are best effort: a push error is logged and never fails the price update.
-async function notifyPriceChanges(connection, changes) {
-  if (changes.length === 0) return;
-  try {
-    await sendPriceNotifications({
-      db: connection.db,
-      messaging: connection.messaging,
-      messages: changes.map(buildNotificationMessage),
-    });
-  } catch (err) {
-    console.warn(`Notifiche non inviate: ${err.message}`);
-  }
-}
-
-// Missing or invalid service account: nothing can be read, so the job warns and exits cleanly.
-// Runtime errors (network, Firestore) fail the job, so they show up in Actions.
-function serviceAccountOrNull() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!raw || !raw.trim()) return null;
-  try {
-    return parseServiceAccount(raw);
-  } catch (err) {
-    console.warn(`${err.message}: aggiornamento saltato`);
-    return null;
-  }
-}
-
+// Missing FIREBASE_PROJECT_ID or an unreadable product list fails the job: without the list there is nothing to update.
 async function main() {
-  const serviceAccount = serviceAccountOrNull();
-  if (!serviceAccount) {
-    console.warn('FIREBASE_SERVICE_ACCOUNT non disponibile: la lista prodotti è in Firestore, nulla da aggiornare. data/prices.json non modificato.');
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!projectId) throw new Error('FIREBASE_PROJECT_ID non impostato: impossibile leggere la lista prodotti');
+
+  const products = await fetchPublicProducts(projectId);
+  const previous = await readJson(PRICES_PATH, null);
+  const now = new Date().toISOString();
+
+  // Archived products are not fetched; their stored entries are carried over by buildPricesFile.
+  const active = products.filter(isActive);
+  if (products.length === 0) console.log('Nessun prodotto in Firestore');
+
+  const results = new Map();
+  for (const [index, product] of active.entries()) {
+    if (index > 0) await sleep(REQUEST_DELAY_MS);
+    const result = await scrapeOne(product.asin);
+    results.set(product.asin, result);
+    console.log(`${product.asin} → ${result.price ?? 'n/d'}${result.error ? ` (${result.error})` : ''}`);
+  }
+
+  const file = buildPricesFile({ products, previous, results, now });
+  // The changes are never written to prices.json. They go to a separate file, read by the notification step, which
+  // runs only after the commit and push of prices.json (see the workflow).
+  const changes = detectPriceChanges(previous, file, products);
+  const changesPath = process.env.PRICE_CHANGES_PATH;
+  if (changesPath) {
+    await mkdir(dirname(changesPath), { recursive: true });
+    await writeFile(changesPath, `${JSON.stringify(changes)}\n`);
+  }
+
+  if (!hasPriceChanges(previous, file)) {
+    console.log(`Nessuna variazione: ${PRICES_PATH} non riscritto`);
     return;
   }
-
-  const connection = await connect(serviceAccount);
-  try {
-    const products = await readProducts(connection.db);
-    const previous = await readJson(PRICES_PATH, null);
-    const now = new Date().toISOString();
-
-    // Archived products are not fetched; their stored entries are carried over by buildPricesFile.
-    const active = products.filter(isActive);
-    if (products.length === 0) console.log('Nessun prodotto in Firestore');
-
-    const results = new Map();
-    for (const [index, product] of active.entries()) {
-      if (index > 0) await sleep(REQUEST_DELAY_MS);
-      const result = await scrapeOne(product.asin);
-      results.set(product.asin, result);
-      console.log(`${product.asin} → ${result.price ?? 'n/d'}${result.error ? ` (${result.error})` : ''}`);
-    }
-
-    const file = buildPricesFile({ products, previous, results, now });
-    // Computed in memory only: the changes are never written to prices.json.
-    const changes = detectPriceChanges(previous, file, products);
-    if (!hasPriceChanges(previous, file)) {
-      console.log(`Nessuna variazione: ${PRICES_PATH} non riscritto`);
-      return;
-    }
-    await mkdir(dirname(PRICES_PATH), { recursive: true });
-    await writeFile(PRICES_PATH, `${JSON.stringify(file, null, 2)}\n`);
-    console.log(`Scritto ${PRICES_PATH} (${active.length} prodotti attivi, ${changes.length} cambi di prezzo)`);
-    await notifyPriceChanges(connection, changes);
-  } finally {
-    await connection.close();
-  }
+  await mkdir(dirname(PRICES_PATH), { recursive: true });
+  await writeFile(PRICES_PATH, `${JSON.stringify(file, null, 2)}\n`);
+  console.log(`Scritto ${PRICES_PATH} (${active.length} prodotti attivi, ${changes.length} cambi di prezzo)`);
 }
 
 main().catch((err) => {

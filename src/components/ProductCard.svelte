@@ -3,7 +3,7 @@
   import Sparkline from './Sparkline.svelte';
   import PriceHistory from './PriceHistory.svelte';
 
-  let { product, item } = $props();
+  let { product, item, onremove = null } = $props();
 
   const history = $derived(item?.history ?? []);
   const stats = $derived(summarize(history));
@@ -34,13 +34,22 @@
     <PriceHistory {history} />
   {/if}
 
+  {#if !item}
+    <p class="checked">In attesa del primo controllo prezzi (ogni ora)</p>
+  {/if}
+
   {#if item?.error}
     <p class="error">Ultimo aggiornamento non riuscito: {item.error}</p>
   {/if}
 
-  <a
-    class="amazon-link"
-    href="https://www.amazon.it/dp/{encodeURIComponent(product.asin)}"
-    target="_blank"
-    rel="noopener">Apri su Amazon</a>
+  <div class="card-actions">
+    <a
+      class="amazon-link"
+      href="https://www.amazon.it/dp/{encodeURIComponent(product.asin)}"
+      target="_blank"
+      rel="noopener">Apri su Amazon</a>
+    {#if onremove}
+      <button type="button" class="btn-secondary" onclick={() => onremove(product.asin)}>Rimuovi</button>
+    {/if}
+  </div>
 </article>

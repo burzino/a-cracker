@@ -13,9 +13,9 @@ test('npm run build produces the deployable site in dist/', () => {
   const expected = [
     'index.html',
     'sw.js',
+    'firebase-messaging-sw.js',
     'manifest.webmanifest',
     'icons/icon-192.png',
-    'data/products.json',
     'data/prices.json',
   ];
   for (const file of expected) {

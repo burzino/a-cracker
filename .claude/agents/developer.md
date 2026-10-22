@@ -17,4 +17,4 @@ Regole:
 - Scrivi il codice come il codice circostante: commenti solo dove il perché non è ovvio.
 - Ogni modifica alla logica di parsing deve avere un test con fixture.
 - Non committare e non fare push: il deploy avviene solo quando l'utente lo autorizza.
-- Non creare dati di prodotti reali; `data/products.json` parte vuoto.
+- Non creare dati di prodotti reali; la lista prodotti sta in Firestore (collezione `products`) e non va creata a mano nel repo.

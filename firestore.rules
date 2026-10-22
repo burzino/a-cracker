@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// Tradeoff: the PWA gate is only a client-side facade, so the product list is readable and writable by anyone who
+// has the public web config. Writes are limited to the expected fields and to the document id = asin.
+// Devices can only register themselves. The price job uses the Admin SDK, which bypasses these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /products/{asin} {
+      allow read: if true;
+
+      allow create, update: if request.resource.data.keys().hasOnly(['asin', 'name', 'targetPrice', 'addedAt', 'archivedAt'])
+        && request.resource.data.asin == asin
+        && request.resource.data.addedAt is string
+        && (request.resource.data.archivedAt == null || request.resource.data.archivedAt is string);
+
+      allow delete: if true;
+    }
+
+    match /devices/{token} {
+      allow read, delete: if false;
+
+      allow create: if request.resource.data.keys().hasOnly(['createdAt', 'lastSeenAt'])
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.lastSeenAt == request.time;
+
+      allow update: if request.resource.data.keys().hasOnly(['createdAt', 'lastSeenAt'])
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.lastSeenAt == request.time;
+    }
+  }
+}

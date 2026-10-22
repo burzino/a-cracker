@@ -1,4 +1,5 @@
 // Pure update rules for data/prices.json. Callers pass `now` so results are deterministic in tests.
+import { isActive } from './products.mjs';
 
 export const HISTORY_DAYS = 365;
 
@@ -52,9 +53,14 @@ export function hasPriceChanges(previous, next) {
 }
 
 // Builds the whole file from the product list and the previous file.
+// Archived products are not fetched: their stored entry is carried over unchanged, so restoring one keeps its history.
 export function buildPricesFile({ products, previous, results, now }) {
   const items = {};
   for (const product of products) {
+    if (!isActive(product)) {
+      if (previous?.items?.[product.asin]) items[product.asin] = previous.items[product.asin];
+      continue;
+    }
     const result = results.get(product.asin) ?? { price: null, error: 'Nessun risultato' };
     items[product.asin] = updateItem(previous?.items?.[product.asin], {
       name: result.name ?? product.name,

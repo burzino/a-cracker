@@ -2,7 +2,7 @@ name: Update prices
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,8 +21,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
 
-      - name: Fetch prices
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch prices and notify changes
+        env:
+          # Optional: without it the prices are still updated and the notifications are skipped with a warning.
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: npm run update-prices
 
       - name: Commit if prices changed

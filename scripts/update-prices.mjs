@@ -1,15 +1,17 @@
-// Fetches the current price of every product in data/products.json and rewrites data/prices.json.
-// Run by .github/workflows/update-prices.yml. Requires Node 18+ (global fetch).
+// Reads the product list from Firestore ("products"), fetches the current price of every active product and rewrites
+// data/prices.json. Sends a push notification for each price change to the devices in "devices".
+// Run by .github/workflows/update-prices.yml. Requires Node 20.19+ (global fetch).
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BlockedError, extractPrice, extractProductName, hasPriceMarkers } from './lib/parse-price.mjs';
 import { buildPricesFile, hasPriceChanges } from './lib/history.mjs';
-import { validateProducts } from './lib/products.mjs';
+import { isActive } from './lib/products.mjs';
+import { buildNotificationMessage, detectPriceChanges } from './lib/notifications.mjs';
+import { connect, parseServiceAccount, readProducts, sendPriceNotifications } from './lib/firebase-admin.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const PRODUCTS_PATH = resolve(ROOT, 'data/products.json');
 const PRICES_PATH = resolve(ROOT, 'data/prices.json');
 
 const MARKETPLACE = 'https://www.amazon.it';
@@ -60,27 +62,72 @@ async function scrapeOne(asin) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function main() {
-  const products = validateProducts(await readJson(PRODUCTS_PATH, []));
-  const previous = await readJson(PRICES_PATH, null);
-  const now = new Date().toISOString();
-
-  const results = new Map();
-  for (const [index, product] of products.entries()) {
-    if (index > 0) await sleep(REQUEST_DELAY_MS);
-    const result = await scrapeOne(product.asin);
-    results.set(product.asin, result);
-    console.log(`${product.asin} → ${result.price ?? 'n/d'}${result.error ? ` (${result.error})` : ''}`);
+// Notifications are best effort: a push error is logged and never fails the price update.
+async function notifyPriceChanges(connection, changes) {
+  if (changes.length === 0) return;
+  try {
+    await sendPriceNotifications({
+      db: connection.db,
+      messaging: connection.messaging,
+      messages: changes.map(buildNotificationMessage),
+    });
+  } catch (err) {
+    console.warn(`Notifiche non inviate: ${err.message}`);
   }
+}
 
-  const file = buildPricesFile({ products, previous, results, now });
-  if (!hasPriceChanges(previous, file)) {
-    console.log(`Nessuna variazione: ${PRICES_PATH} non riscritto`);
+// Missing or invalid service account: nothing can be read, so the job warns and exits cleanly.
+// Runtime errors (network, Firestore) fail the job, so they show up in Actions.
+function serviceAccountOrNull() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw || !raw.trim()) return null;
+  try {
+    return parseServiceAccount(raw);
+  } catch (err) {
+    console.warn(`${err.message}: aggiornamento saltato`);
+    return null;
+  }
+}
+
+async function main() {
+  const serviceAccount = serviceAccountOrNull();
+  if (!serviceAccount) {
+    console.warn('FIREBASE_SERVICE_ACCOUNT non disponibile: la lista prodotti è in Firestore, nulla da aggiornare. data/prices.json non modificato.');
     return;
   }
-  await mkdir(dirname(PRICES_PATH), { recursive: true });
-  await writeFile(PRICES_PATH, `${JSON.stringify(file, null, 2)}\n`);
-  console.log(`Scritto ${PRICES_PATH} (${products.length} prodotti)`);
+
+  const connection = await connect(serviceAccount);
+  try {
+    const products = await readProducts(connection.db);
+    const previous = await readJson(PRICES_PATH, null);
+    const now = new Date().toISOString();
+
+    // Archived products are not fetched; their stored entries are carried over by buildPricesFile.
+    const active = products.filter(isActive);
+    if (products.length === 0) console.log('Nessun prodotto in Firestore');
+
+    const results = new Map();
+    for (const [index, product] of active.entries()) {
+      if (index > 0) await sleep(REQUEST_DELAY_MS);
+      const result = await scrapeOne(product.asin);
+      results.set(product.asin, result);
+      console.log(`${product.asin} → ${result.price ?? 'n/d'}${result.error ? ` (${result.error})` : ''}`);
+    }
+
+    const file = buildPricesFile({ products, previous, results, now });
+    // Computed in memory only: the changes are never written to prices.json.
+    const changes = detectPriceChanges(previous, file, products);
+    if (!hasPriceChanges(previous, file)) {
+      console.log(`Nessuna variazione: ${PRICES_PATH} non riscritto`);
+      return;
+    }
+    await mkdir(dirname(PRICES_PATH), { recursive: true });
+    await writeFile(PRICES_PATH, `${JSON.stringify(file, null, 2)}\n`);
+    console.log(`Scritto ${PRICES_PATH} (${active.length} prodotti attivi, ${changes.length} cambi di prezzo)`);
+    await notifyPriceChanges(connection, changes);
+  } finally {
+    await connection.close();
+  }
 }
 
 main().catch((err) => {

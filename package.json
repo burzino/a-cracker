@@ -1,0 +1,22 @@
+{
+  "name": "amazon-price-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PWA statica per tracciare il prezzo di prodotti Amazon, aggiornata via GitHub Actions",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "update-prices": "node scripts/update-prices.mjs",
+    "build": "vite build",
+    "serve": "vite build && node scripts/serve.mjs",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "svelte": "^5.57.2",
+    "vite": "^8.3.5"
+  }
+}
